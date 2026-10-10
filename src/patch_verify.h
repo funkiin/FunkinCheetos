@@ -1,0 +1,16 @@
+#ifndef FUNKIN_PATCH_VERIFY_H
+#define FUNKIN_PATCH_VERIFY_H
+#include <stdint.h>
+#include <stddef.h>
+typedef struct { uint32_t rva; unsigned char expected[5]; unsigned char replacement[5]; size_t length; } VerifyPatch;
+static const VerifyPatch verify_patches[] = {
+    {0x0100D5DE, {0x75, 0x7F}, {0x90, 0x90}, 2},
+    {0x0100DA42, {0x75, 0x7F}, {0x90, 0x90}, 2},
+    {0x0100DE96, {0x72, 0x7F}, {0x90, 0x90}, 2},
+    {0x00992890, {0x48}, {0xC3}, 1},
+    {0x0098A510, {0x48}, {0xC3}, 1},
+    {0x009980DC, {0xE8, 0xAF, 0x86, 0xFE, 0xFF}, {0x90, 0x90, 0x90, 0x90, 0x90}, 5},
+    {0x0100CC4E, {0x74, 0x7A}, {0x90, 0x90}, 2},
+};
+#define VERIFY_PATCH_COUNT (sizeof(verify_patches) / sizeof(verify_patches[0]))
+#endif
