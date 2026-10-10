@@ -50,13 +50,36 @@ static BOOL check_image(BYTE *base) {
         return FALSE;
 
     IMAGE_NT_HEADERS64 *nt = (IMAGE_NT_HEADERS64 *)(base + dos->e_lfanew);
-    return nt->Signature == IMAGE_NT_SIGNATURE &&
-           nt->FileHeader.Machine == IMAGE_FILE_MACHINE_AMD64 &&
-           nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC &&
-           nt->FileHeader.TimeDateStamp == 0x6A7C66FF &&
-           nt->OptionalHeader.SizeOfImage == 0x050F6000 &&
-           nt->OptionalHeader.AddressOfEntryPoint == 0x035B52E0 &&
-           nt->OptionalHeader.SizeOfCode == 0x03635800;
+    if (nt->Signature != IMAGE_NT_SIGNATURE ||
+        nt->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
+        nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC ||
+        nt->FileHeader.NumberOfSections == 0 ||
+        nt->FileHeader.NumberOfSections > 96)
+        return FALSE;
+
+    DWORD image_size = nt->OptionalHeader.SizeOfImage;
+    IMAGE_SECTION_HEADER *sections = IMAGE_FIRST_SECTION(nt);
+    for (size_t i = 0; i < sizeof(patches) / sizeof(patches[0]); ++i) {
+        const Patch *patch = &patches[i];
+        uint64_t end = (uint64_t)patch->rva + patch->length;
+        if (!patch->length || patch->length > PATCH_MAX_SIZE || end > image_size)
+            return FALSE;
+
+        BOOL executable_section = FALSE;
+        for (WORD j = 0; j < nt->FileHeader.NumberOfSections; ++j) {
+            const IMAGE_SECTION_HEADER *section = &sections[j];
+            uint64_t start = section->VirtualAddress;
+            uint64_t size = section->Misc.VirtualSize;
+            if (size < section->SizeOfRawData) size = section->SizeOfRawData;
+            if ((section->Characteristics & IMAGE_SCN_MEM_EXECUTE) &&
+                patch->rva >= start && end <= start + size) {
+                executable_section = TRUE;
+                break;
+            }
+        }
+        if (!executable_section) return FALSE;
+    }
+    return TRUE;
 }
 
 static BOOL write_patch(BYTE *address, const BYTE *bytes, SIZE_T length) {

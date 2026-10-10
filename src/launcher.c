@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <wchar.h>
+#include <string.h>
+#include "patch_verify.h"
 
 static BOOL path_next_to_launcher(WCHAR *output, DWORD capacity, const WCHAR *file) {
     DWORD length = GetModuleFileNameW(NULL, output, capacity);
@@ -89,6 +91,50 @@ static BOOL inject_dll(HANDLE process, DWORD pid, const WCHAR *dll_path) {
     return success;
 }
 
+static BOOL verify_active_patches(HANDLE process, DWORD pid) {
+    BYTE *base = (BYTE *)remote_module(pid, L"Funkin.exe");
+    if (!base) {
+        fwprintf(stderr, L"is Funkin running??\n");
+        return FALSE;
+    }
+
+    for (int attempt = 0; attempt < 150; ++attempt) {
+        size_t applied = 0;
+        for (size_t i = 0; i < VERIFY_PATCH_COUNT; ++i) {
+            const VerifyPatch *patch = &verify_patches[i];
+            BYTE actual[5];
+            SIZE_T bytes_read = 0;
+            if (ReadProcessMemory(process, base + patch->rva, actual,
+                                  patch->length, &bytes_read) &&
+                bytes_read == patch->length &&
+                memcmp(actual, patch->replacement, patch->length) == 0)
+                ++applied;
+        }
+        if (applied == VERIFY_PATCH_COUNT) return TRUE;
+        if (WaitForSingleObject(process, 0) != WAIT_TIMEOUT) break;
+        Sleep(20);
+    }
+
+    for (size_t i = 0; i < VERIFY_PATCH_COUNT; ++i) {
+        const VerifyPatch *patch = &verify_patches[i];
+        BYTE actual[5];
+        SIZE_T bytes_read = 0;
+        if (!ReadProcessMemory(process, base + patch->rva, actual,
+                               patch->length, &bytes_read) ||
+            bytes_read != patch->length) {
+            fwprintf(stderr, L"Cheetos %u: cannot read RVA 0x%08lX.\n",
+                     (unsigned int)(i + 1), (unsigned long)patch->rva);
+        } else if (memcmp(actual, patch->replacement, patch->length) != 0) {
+            BOOL original = memcmp(actual, patch->expected, patch->length) == 0;
+            fwprintf(stderr, L"Cheetos %u: %ls at RVA 0x%08lX.\n",
+                     (unsigned int)(i + 1),
+                     original ? L"still contains original bytes" : L"unexpected bytes",
+                     (unsigned long)patch->rva);
+        }
+    }
+    return FALSE;
+}
+
 int wmain(void) {
     WCHAR exe_path[MAX_PATH], dll_path[MAX_PATH], work_directory[MAX_PATH];
     if (!path_next_to_launcher(exe_path, MAX_PATH, L"Funkin.exe") ||
@@ -121,6 +167,7 @@ int wmain(void) {
     }
 
     BOOL loaded = inject_dll(info.hProcess, info.dwProcessId, dll_path);
+    if (loaded) loaded = verify_active_patches(info.hProcess, info.dwProcessId);
     if (loaded) {
         wprintf(L"cheetos loaded! have fun cheating! | FunkinCheetos made with love by @hrioshi_ on twitter <3\n");
     } else {
